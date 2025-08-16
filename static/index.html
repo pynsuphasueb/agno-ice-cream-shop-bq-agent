@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agno BigQuery Agent</title>
+  <style>
+    :root { --bg:#f5f7fb; --card:#ffffff; --muted:#6b7280; --fg:#0f172a; --primary:#111827; --ring:#e5e7eb; }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans","Apple Color Emoji","Segoe UI Emoji";background:var(--bg);color:var(--fg)}
+    .container{max-width:820px;margin:40px auto;padding:0 16px}
+    .card{background:var(--card);border:1px solid #e5e7eb;border-radius:18px;box-shadow:0 1px 3px rgba(0,0,0,.05);overflow:hidden}
+    .header{padding:14px 18px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center}
+    .title{font-weight:700;letter-spacing:.2px}
+    .session{font-size:12px;color:var(--muted)}
+    .chat{padding:18px;display:flex;flex-direction:column;gap:12px;height:64vh;overflow:auto;background:linear-gradient(180deg, rgba(255,255,255,0.9), rgba(255,255,255,1));}
+    .msg{display:flex;gap:10px;align-items:flex-end}
+    .msg.ai{justify-content:flex-start}
+    .msg.me{justify-content:flex-end}
+    .avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;user-select:none}
+    .ai .avatar{background:#eef2ff;color:#3730a3;border:1px solid #e5e7eb}
+    .me .avatar{background:#111827;color:#fff}
+    .bubble{max-width:70%;padding:12px 14px;border-radius:16px;line-height:1.6;white-space:pre-wrap;word-wrap:break-word}
+    .ai .bubble{background:#ffffff;border:1px solid #e5e7eb;color:#0f172a;border-top-left-radius:6px}
+    .me .bubble{background:#111827;color:#ffffff;border-top-right-radius:6px}
+    .footer{padding:14px 18px;border-top:1px solid #e5e7eb;display:flex;gap:10px;align-items:center}
+    .input{flex:1;display:flex;gap:10px;align-items:stretch}
+    textarea{flex:1;min-height:48px;max-height:140px;padding:12px 14px;border:1px solid var(--ring);border-radius:14px;resize:vertical;font-size:14px;outline:none}
+    textarea:focus{box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+    button{padding:12px 16px;border:1px solid var(--primary);background:var(--primary);color:#fff;border-radius:14px;font-weight:600;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .hint{font-size:12px;color:var(--muted);margin-left:6px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="header">
+        <div class="title">Agno BigQuery Agent</div>
+        <div class="session" id="sid"></div>
+      </div>
+      <div class="chat" id="chat"></div>
+      <div class="footer">
+        <div class="input">
+          <textarea id="input" placeholder="พิมพ์คำถาม เช่น ‘ยอดขายรวม Top 5 ตามสาขา’ (กด Enter เพื่อส่ง, Shift+Enter ขึ้นบรรทัดใหม่)"></textarea>
+        </div>
+        <button id="send">ส่ง</button>
+      </div>
+    </div>
+    <div class="hint">เอเจนต์อยู่ฝั่งซ้าย • คุณอยู่ฝั่งขวา</div>
+  </div>
+
+  <script>
+    const chatEl = document.getElementById('chat');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const sidEl = document.getElementById('sid');
+
+    let sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) {
+      sessionId = `web-${Math.random().toString(36).slice(2,8)}`;
+      localStorage.setItem('sessionId', sessionId);
+    }
+    sidEl.textContent = `session_id: ${sessionId}`;
+
+    function msgNode(role, text){
+      const wrap = document.createElement('div');
+      wrap.className = 'msg ' + (role === 'me' ? 'me' : 'ai');
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.textContent = role === 'me' ? '🙂' : '🤖';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+      if (role === 'me') {
+        wrap.appendChild(bubble);
+        wrap.appendChild(avatar);
+      } else {
+        wrap.appendChild(avatar);
+        wrap.appendChild(bubble);
+      }
+      return wrap;
+    }
+
+    function append(role, text){
+      chatEl.appendChild(msgNode(role, text));
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    async function send(){
+      const msg = inputEl.value.trim();
+      if(!msg) return;
+      append('me', msg);
+      inputEl.value = '';
+      inputEl.focus();
+      sendBtn.disabled = true;
+
+      const typing = msgNode('ai', 'กำลังคิด…');
+      typing.querySelector('.bubble').style.opacity = 0.6;
+      chatEl.appendChild(typing);
+      chatEl.scrollTop = chatEl.scrollHeight;
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg, session_id: sessionId })
+        });
+        const data = await res.json();
+        if (data.session_id && data.session_id !== sessionId) {
+          sessionId = data.session_id;
+          localStorage.setItem('sessionId', sessionId);
+          sidEl.textContent = `session_id: ${sessionId}`;
+        }
+
+        typing.querySelector('.bubble').textContent = data.answer || '(no answer)';
+        typing.querySelector('.bubble').style.opacity = 1;
+      } catch (e) {
+        typing.querySelector('.bubble').textContent = 'เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์';
+        typing.querySelector('.bubble').style.opacity = 1;
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+
+    sendBtn.addEventListener('click', send);
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+  </script>
+</body>
+</html>
